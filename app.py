@@ -10,7 +10,7 @@ from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
-# ---------- Config ----------
+# Config
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 EMBED_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE = 900      # max characters per chunk
@@ -33,7 +33,7 @@ RAG_PROMPT = (
 NOT_FOUND = "I couldn't find that in the uploaded document."
 
 
-# ---------- Helpers ----------
+# Helpers
 def clean(text):
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
@@ -51,7 +51,7 @@ def load_embedder():
     return SentenceTransformer(EMBED_MODEL)
 
 
-# ---------- RAG pipeline ----------
+# RAG pipeline
 def extract_pages(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = [(i + 1, page.get_text().strip()) for i, page in enumerate(doc)]
@@ -148,10 +148,54 @@ def show_sources(sources):
             st.caption(s["text"][:300] + ("..." if len(s["text"]) > 300 else ""))
 
 
-# ---------- App ----------
-st.set_page_config(page_title="KnowBase AI", page_icon="📚", layout="wide")
-st.title("📚 KnowBase AI")
-st.caption("Chat with an AI, or upload a PDF and ask questions about it.")
+# App
+st.set_page_config(page_title="KnowBase AI", page_icon="📚", layout="centered")
+
+CUSTOM_CSS = """
+<style>
+/* page */
+.block-container {max-width: 820px; padding-top: 1.5rem; padding-bottom: 6rem;}
+#MainMenu, footer {visibility: hidden;}
+header[data-testid="stHeader"] {background: transparent;}
+
+/* header */
+.kb-header {text-align: center; margin-bottom: 1.2rem;}
+.kb-header h1 {font-size: 2.2rem; margin: 0; padding: 0;}
+.kb-header p {color: #8b93a7; margin: 0.3rem 0 0 0;}
+
+/* chat bubbles */
+[data-testid="stChatMessage"] {
+    background: #1b2130;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 18px;
+    padding: 0.8rem 1.1rem;
+    margin-bottom: 0.9rem;
+    max-width: 88%;
+}
+/* your messages: right side, blue */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+    flex-direction: row-reverse;
+    margin-left: auto;
+    background: #2b5cff;
+    border: none;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) p {color: #fff;}
+
+/* input box */
+[data-testid="stChatInput"] {border-radius: 24px;}
+
+/* sources panel and buttons */
+[data-testid="stExpander"] {border-radius: 12px; margin-top: 0.4rem;}
+.stButton > button {border-radius: 10px;}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="kb-header"><h1>📚 KnowBase AI</h1>'
+    "<p>Chat with an AI, or upload a PDF and ask questions about it.</p></div>",
+    unsafe_allow_html=True,
+)
 
 client = get_client()
 embedder = load_embedder()
