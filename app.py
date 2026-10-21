@@ -21,16 +21,20 @@ HISTORY_LIMIT = 8
 
 GENERAL_PROMPT = "You are KnowBase AI, a helpful and concise assistant."
 RAG_PROMPT = (
-    "You are KnowBase AI. Answer the user's question using ONLY the document "
-    "excerpts provided below. Each excerpt is labelled with its source and page. "
-    "If the excerpts do not contain enough information to answer, reply exactly: "
-    "\"I couldn't find that in the uploaded document.\" "
-    "Do not invent facts. Mention page numbers when helpful."
+    "You are KnowBase AI, a precise assistant that answers questions about a document. "
+    "Use ONLY the document excerpts below. Each excerpt is labelled with its page. "
+    "Answer directly, without phrases like 'the excerpts say' or 'according to the text'. "
+    "For questions about reasons, causes or impacts, give a short bulleted list. "
+    "Otherwise answer in 2-4 clear sentences. "
+    "Cite pages in brackets like (p. 3). "
+    "Ignore quiz questions or answer options unless the user asks about them. "
+    "If the excerpts do not contain enough information, reply exactly: "
+    "\"I couldn't find that in the uploaded document.\" Never invent facts."
 )
 NOT_FOUND = "I couldn't find that in the uploaded document."
 
 
-# ---------- Helpers ----------
+# Helpers
 def clean(text):
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
@@ -48,7 +52,7 @@ def load_embedder():
     return SentenceTransformer(EMBED_MODEL)
 
 
-# ---------- RAG pipeline ----------
+# RAG pipeline
 def extract_pages(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = [(i + 1, page.get_text().strip()) for i, page in enumerate(doc)]
@@ -107,7 +111,7 @@ def show_sources(sources):
             st.caption(s["text"][:300] + "...")
 
 
-# ---------- App ----------
+# App
 st.set_page_config(page_title="KnowBase AI", page_icon="📚", layout="wide")
 st.title("📚 KnowBase AI")
 st.caption("Chat with an AI, or upload a PDF and ask questions about it.")
