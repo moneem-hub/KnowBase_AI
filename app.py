@@ -13,11 +13,10 @@ load_dotenv()
 # ---------- Config ----------
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 EMBED_MODEL = "all-MiniLM-L6-v2"
-CHUNK_SIZE = 900
-OVERLAP = 150
-TOP_K = 4
-MIN_SCORE = 0.25
-HISTORY_LIMIT = 8
+CHUNK_SIZE = 900      # max characters per chunk
+TOP_K = 6             # chunks retrieved per question
+MIN_SCORE = 0.25      # below this similarity = "not in the document"
+HISTORY_LIMIT = 8     # past messages sent to the model
 
 GENERAL_PROMPT = "You are KnowBase AI, a helpful and concise assistant."
 RAG_PROMPT = (
@@ -34,7 +33,7 @@ RAG_PROMPT = (
 NOT_FOUND = "I couldn't find that in the uploaded document."
 
 
-# Helpers
+# ---------- Helpers ----------
 def clean(text):
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
@@ -52,7 +51,7 @@ def load_embedder():
     return SentenceTransformer(EMBED_MODEL)
 
 
-# RAG pipeline
+# ---------- RAG pipeline ----------
 def extract_pages(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = [(i + 1, page.get_text().strip()) for i, page in enumerate(doc)]
@@ -60,14 +59,35 @@ def extract_pages(pdf_bytes):
 
 
 def chunk_pages(pages, source):
+    """Split each page at sentence boundaries into chunks of up to CHUNK_SIZE
+    characters. The last sentence of a chunk is repeated at the start of the
+    next one, so context carries across the boundary."""
     chunks = []
-    step = CHUNK_SIZE - OVERLAP
     for page_no, text in pages:
-        for start in range(0, len(text), step):
-            piece = text[start:start + CHUNK_SIZE].strip()
-            if len(piece) > 50:
-                chunks.append({"text": piece, "source": source, "page": page_no})
-    return chunks
+        text = re.sub(r"\s+", " ", text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        # hard-split any single sentence that is longer than a chunk
+        sentences = [
+            s[i:i + CHUNK_SIZE]
+            for s in sentences
+            for i in range(0, len(s), CHUNK_SIZE)
+        ]
+        current, length = [], 0
+        for s in sentences:
+            if current and length + len(s) > CHUNK_SIZE:
+                chunks.append(" ".join(current))
+                current = current[-1:]  # one-sentence overlap
+                length = sum(len(x) + 1 for x in current)
+            current.append(s)
+            length += len(s) + 1
+        if current:
+            chunks.append(" ".join(current))
+        # attach metadata (done per page so page numbers stay correct)
+        chunks = [
+            c if isinstance(c, dict) else {"text": c, "source": source, "page": page_no}
+            for c in chunks
+        ]
+    return [c for c in chunks if len(c["text"]) > 50]
 
 
 def build_index(chunks, embedder):
@@ -104,14 +124,31 @@ def build_messages(question, history, hits, has_doc):
     )
 
 
+def stream_answer(client, messages):
+    stream = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        temperature=0.2,
+        max_tokens=1000,
+        stream=True,
+    )
+    for event in stream:
+        if event.choices:
+            delta = event.choices[0].delta.content
+            if delta:
+                yield delta
+
+
 def show_sources(sources):
-    with st.expander("Sources"):
+    pages = sorted({s["page"] for s in sources})
+    label = "Sources: page " + ", ".join(str(p) for p in pages)
+    with st.expander(label):
         for s in sources:
-            st.markdown(f"**{s['source']} - page {s['page']}** (score {s['score']:.2f})")
-            st.caption(s["text"][:300] + "...")
+            st.markdown(f"**Page {s['page']}** - relevance {s['score']:.2f}")
+            st.caption(s["text"][:300] + ("..." if len(s["text"]) > 300 else ""))
 
 
-# App
+# ---------- App ----------
 st.set_page_config(page_title="KnowBase AI", page_icon="📚", layout="wide")
 st.title("📚 KnowBase AI")
 st.caption("Chat with an AI, or upload a PDF and ask questions about it.")
@@ -153,6 +190,13 @@ with st.sidebar:
         st.rerun()
     st.caption(f"Model: {MODEL}")
 
+# Empty-chat hint
+if not ss.messages:
+    if ss.doc_name:
+        st.info(f"Ready. Ask anything about **{ss.doc_name}**.")
+    else:
+        st.info("Ask me anything, or upload a PDF in the sidebar to chat with a document.")
+
 # Show previous messages
 for msg in ss.messages:
     with st.chat_message(msg["role"]):
@@ -173,19 +217,19 @@ if question:
     with st.chat_message("assistant"):
         if has_doc and not hits:
             answer = NOT_FOUND  # nothing relevant found: skip the API call
+            st.markdown(answer)
         else:
-            with st.spinner("Thinking..."):
-                try:
-                    response = client.chat.completions.create(
-                        model=MODEL,
-                        messages=build_messages(question, history, hits, has_doc),
-                        temperature=0.2,
-                        max_tokens=1000,
+            try:
+                answer = clean(
+                    st.write_stream(
+                        stream_answer(
+                            client, build_messages(question, history, hits, has_doc)
+                        )
                     )
-                    answer = clean(response.choices[0].message.content)
-                except Exception as e:
-                    answer = f"Something went wrong: {e}"
-        st.markdown(answer)
+                )
+            except Exception as e:
+                answer = f"Something went wrong: {e}"
+                st.error(answer)
         if hits:
             show_sources(hits)
 
